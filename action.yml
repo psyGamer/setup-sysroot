@@ -1,0 +1,3 @@
+name: 'Setup sysroot environment'
+description: 'Setup a sysroot environment by downloading a precompiled toolchain, adding it to the PATH and setting the CC, CXX and LD variables.'
+author: 'psyGamer'

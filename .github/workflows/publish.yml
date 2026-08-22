@@ -14,7 +14,7 @@ env:
   CROSSTOOLNG_VERSION: "1.28.0"
 
 jobs:
-  prepare:
+  setup:
     name: Setup Build Matrix
     runs-on: ubuntu-latest
     outputs:
@@ -49,40 +49,111 @@ jobs:
 
           echo "matrix=[${MATRIX}]" >> $GITHUB_OUTPUT
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl bison flex gperf help2man libtool-bin meson ninja-build texinfo
+
+      - name: Install crosstool-NG
+        run: |
+          curl -LO http://crosstool-ng.org/download/crosstool-ng/crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
+          tar -xf crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
+          cd crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}
+
+          ./configure --prefix="${{ github.workspace }}/.local"
+          make install -j$(nproc)
+          echo "${{ github.workspace }}/.local/bin" >> "$GITHUB_PATH"
+
+          cd "${{ github.workspace }}"
+          tar -cf crosstool-ng.tar .local
+
+      - name: Upload crosstool-NG
+        uses: actions/upload-artifact@v7
+        with:
+          path: crosstool-ng.tar
+          archive: false
+
+      - name: Restore cached package sources
+        uses: actions/cache@v6
+        with:
+          path: src.tar
+          key: src.tar-${{ hashFiles('.local/share/crosstool-ng/packages') }}-${{ hashFiles('configs') }}
+          restore-keys: |
+            src.tar-${{ hashFiles('.local/share/crosstool-ng/packages') }}-
+            src.tar-
+
+      - name: Extract cached package sources
+        run: |
+          tar -xvf src.tar || true
+          touch stamp
+
+      - name: Fetch package sources
+        run: |
+          mkdir -p src
+          
+          for TOOLCHAIN_CONFIG in configs/*.config; do
+            cp $TOOLCHAIN_CONFIG defconfig
+            ct-ng defconfig
+
+            sed -i -e '/CT_LOG_PROGRESS_BAR/s/y$/n/' .config
+            sed -i -e '/CT_LOCAL_TARBALLS_DIR/s/HOME/CT_TOP_DIR/' .config
+            sed -i -e '/CT_PREFIX_DIR/s/HOME/CT_TOP_DIR/' .config
+            sed -i -e 's/^.*CT_DOWNLOAD_WGET_OPTIONS.*$/CT_DOWNLOAD_WGET_OPTIONS="--tries=10 -nc --progress=dot:binary --no-use-server-timestamps"/' .config
+            if ! ct-ng source CT_PREFIX=/tmp/toolchains; then
+              echo "=== build.log ==="
+              cat build.log || true
+              exit 1
+            fi
+          done
+
+          find src -type f -not -newer stamp -delete -print
+          tar -cvf src.tar src
+
   build-toolchains:
     strategy:
       matrix:
-        toolchain: ${{ fromJson(needs.prepare.outputs.matrix) }}
+        toolchain: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     name: Build Toolchains (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs: [prepare]
+    needs: [setup]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install crosstool-NG
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y curl bison flex gperf help2man libtool-bin meson ninja-build texinfo
+          
+      - name: Download crosstool-NG
+        uses: actions/download-artifact@v8
+        with:
+          name: crosstool-ng.tar
 
-          curl -LO http://crosstool-ng.org/download/crosstool-ng/crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
-          tar -xf crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
-          cd crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}
+      - name: Install crosstool-NG
+        run: |
+          tar -xf crosstool-ng.tar
+          echo "$(pwd)/.local/bin" >> "$GITHUB_PATH"
 
-          ./configure
-          make -j$(nproc)
-          sudo make install
+      - name: Download package sources
+        uses: actions/cache@v6
+        with:
+          path: src.tar
+          key: src.tar-${{ hashFiles('.local/share/crosstool-ng/packages') }}-${{ hashFiles('configs') }}
+
+      - name: Extract cached package sources
+        continue-on-error: true
+        run: tar -xvf src.tar
 
       - name: Build toolchain
         run: |
-          mkdir build
-          cp configs/${{ matrix.toolchain }}.config build/defconfig
-          cd build
-
+          cp configs/${{ matrix.toolchain }}.config defconfig
           ct-ng defconfig
+
           sed -i -e '/CT_LOG_PROGRESS_BAR/s/y$/n/' .config
+          sed -i -e '/CT_LOCAL_TARBALLS_DIR/s/HOME/CT_TOP_DIR/' .config
           sed -i -e '/CT_GLIBC_ENABLE_DEBUG/s/y$/n/' .config
           if ! ct-ng build -j12 CT_PREFIX=/tmp/toolchains; then
             echo "=== build.log ==="
@@ -92,18 +163,18 @@ jobs:
 
       - name: Package toolchain
         working-directory: /tmp/toolchains
-        run: tar -czf ${{ matrix.toolchain }}.tar.gz ${{ matrix.toolchain }}
+        run: tar -cJf ${{ matrix.toolchain }}.tar.xz ${{ matrix.toolchain }}
 
       - name: Upload toolchain artifact
         uses: actions/upload-artifact@v7
         with:
-          path: /tmp/toolchains/${{ matrix.toolchain }}.tar.gz
+          path: /tmp/toolchains/${{ matrix.toolchain }}.tar.xz
           archive: false
 
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    needs: [prepare, build-toolchains]
+    needs: [build-toolchains]
 
     steps:
       - name: Checkout
@@ -156,4 +227,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ inputs.version-tag }}" --generate-notes --title "${{ inputs.version-tag }}"
-          gh release upload "${{ inputs.version-tag }}" *.tar.gz
+          gh release upload "${{ inputs.version-tag }}" *.tar.xz

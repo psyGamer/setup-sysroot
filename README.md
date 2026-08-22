@@ -23,4 +23,3 @@ Feel free to contribute missing toolchains.
 | `x86_64-debian12-linux-gnu` | Debian 12 "Bookworm" | x86_64       | Linux 6.1  | glibc 2.36 | GCC v11    |
 | `x86_64-debian11-linux-gnu` | Debian 11 "Bullseye" | x86_64       | Linux 5.10 | glibc 2.31 | GCC v10    |
 | `x86_64-debian10-linux-gnu` | Debian 10 "Buster"   | x86_64       | Linux 4.19 | glibc 2.28 | GCC v7     |
-| `x86_64-debian9-linux-gnu`  | Debian 9 "Stretch"   | x86_64       | Linux 4.9  | glibc 2.24 | GCC v6     |

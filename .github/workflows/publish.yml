@@ -1,0 +1,159 @@
+name: Publish Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-tag:
+        required: true
+        description: 'Git tag of the release'
+
+permissions:
+  contents: write
+
+env:
+  CROSSTOOLNG_VERSION: "1.28.0"
+
+jobs:
+  prepare:
+    name: Setup Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.check-update.outputs.matrix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full checkout
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check for updated toolchains
+        shell: bash
+        id: check-update
+        run: |
+          MATRIX=""
+          NEED_COMMA=false
+
+          for TOOLCHAIN_CONFIG in configs/*.config; do
+            if ! TOOLCHAIN_VERSION=$(git describe --contains $(git rev-list -1 HEAD -- $TOOLCHAIN_CONFIG) | sed -E 's/[~^][0-9]*//g'); then
+              # The toolchain was changed since the latest release; need to rebuild
+              if $NEED_COMMA; then
+                MATRIX+=","
+              fi
+
+              MATRIX+="\"$(basename $TOOLCHAIN_CONFIG .config)\""
+              NEED_COMMA=true
+            fi
+          done
+
+          echo "matrix=[${MATRIX}]" >> $GITHUB_OUTPUT
+
+  build-toolchains:
+    strategy:
+      matrix:
+        toolchain: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    name: Build Toolchains (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: [prepare]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install crosstool-NG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl bison flex gperf help2man libtool-bin meson ninja-build texinfo
+
+          curl -LO http://crosstool-ng.org/download/crosstool-ng/crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
+          tar -xf crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}.tar.xz
+          cd crosstool-ng-${{ env.CROSSTOOLNG_VERSION }}
+
+          ./configure
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build toolchain
+        run: |
+          mkdir build
+          cp configs/${{ matrix.toolchain }}.config build/defconfig
+          cd build
+
+          ct-ng defconfig
+          sed -i -e '/CT_LOG_PROGRESS_BAR/s/y$/n/' .config
+          sed -i -e '/CT_GLIBC_ENABLE_DEBUG/s/y$/n/' .config
+          if ! ct-ng build -j12 CT_PREFIX=/tmp/toolchains; then
+            echo "=== build.log ==="
+            cat build.log || true
+            exit 1
+          fi
+
+      - name: Package toolchain
+        working-directory: /tmp/toolchains
+        run: tar -czf ${{ matrix.toolchain }}.tar.gz ${{ matrix.toolchain }}
+
+      - name: Upload toolchain artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: /tmp/toolchains/${{ matrix.toolchain }}.tar.gz
+          archive: false
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs: [prepare, build-toolchains]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full checkout
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download built toolchains
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+
+      - name: Update version switch
+        shell: bash
+        run: |
+          IDENT="        "
+          VERSION_SWITCH="${IDENT}# == VERSION SWITCH BEGIN ==\n"
+
+          for TOOLCHAIN_CONFIG in configs/*.config; do
+            if ! TOOLCHAIN_VERSION=$(git describe --contains $(git rev-list -1 HEAD -- $TOOLCHAIN_CONFIG) | sed -E 's/[~^][0-9]*//g'); then
+              # The toolchain was changed since the latest release; use current version
+              VERSION_SWITCH+="${IDENT}\"$(basename $TOOLCHAIN_CONFIG .config)\") echo \"${{ inputs.version-tag }}\" ;;\n"
+            else
+              # The toolchain was unchanged since the latest release; reuse old build
+              VERSION_SWITCH+="${IDENT}\"$(basename $TOOLCHAIN_CONFIG .config)\") echo \"${TOOLCHAIN_VERSION}\" ;;\n"
+            fi
+          done
+
+          VERSION_SWITCH+="${IDENT}# == VERSION SWITCH END =="
+
+          sed -i -e "/# == VERSION SWITCH BEGIN ==/,/# == VERSION SWITCH END ==/c\\${VERSION_SWITCH}" action.yml
+          cat action.yml
+
+      - name: Commit and tag release
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          git add action.yml
+          git commit --allow-empty -m "Release ${{ inputs.version-tag }}"
+          git tag "${{ inputs.version-tag }}"
+
+          git push origin main
+          git push --tags
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.version-tag }}" --generate-notes --title "${{ inputs.version-tag }}"
+          gh release upload "${{ inputs.version-tag }}" *.tar.gz

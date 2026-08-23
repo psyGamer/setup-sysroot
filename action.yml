@@ -53,17 +53,15 @@ runs:
     id: install
     run: |
       curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.determine-version.outputs.version }}/${{ inputs.toolchain }}.tar.xz
+      mkdir -p /tmp/toolchains
       tar -xf ${{ inputs.toolchain }}.tar.xz -C /tmp/toolchains
 
       SYSROOT="/tmp/toolchains/${{ inputs.toolchain }}"
       export PATH="${PATH}:${SYSROOT}/bin"
 
-      # Overwrite default binutils with sysroot versions
-      export AR="${SYSROOT}/bin/${{ inputs.toolchain }}-ar"
-      export AS="${SYSROOT}/bin/${{ inputs.toolchain }}-as"
+      # Overwrite default C/C++ compiler
       export CC="${SYSROOT}/bin/${{ inputs.toolchain }}-cc"
       export CXX="${SYSROOT}/bin/${{ inputs.toolchain }}-c++"
-      export LD="${SYSROOT}/bin/${{ inputs.toolchain }}-ld"
 
       # Write output variables
       echo "root=${SYSROOT}" >> $GITHUB_OUTPUT

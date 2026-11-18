@@ -54,7 +54,7 @@ runs:
     id: install
     shell: bash
     run: |
-      curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.determine-version.outputs.version }}/${{ inputs.toolchain }}.tar.xz
+      curl -LO https://github.com/psyGamer/setup-sysroot/releases/download/${{ steps.determine-version.outputs.version }}/${{ inputs.toolchain }}.tar.xz
       mkdir -p /tmp/toolchains
       tar -xf ${{ inputs.toolchain }}.tar.xz -C /tmp/toolchains
 

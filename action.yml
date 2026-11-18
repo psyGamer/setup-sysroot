@@ -59,16 +59,18 @@ runs:
       tar -xf ${{ inputs.toolchain }}.tar.xz -C /tmp/toolchains
 
       SYSROOT="/tmp/toolchains/${{ inputs.toolchain }}"
-      export PATH="${PATH}:${SYSROOT}/bin"
+
+      # Update PATH
+      echo "${SYSROOT}/bin" >> $GITHUB_PATH
 
       # Overwrite default C/C++ compiler
-      export CC="${SYSROOT}/bin/${{ inputs.toolchain }}-cc"
-      export CXX="${SYSROOT}/bin/${{ inputs.toolchain }}-c++"
+      echo "CC=${SYSROOT}/bin/${{ inputs.toolchain }}-cc"   >> $GITHUB_ENV
+      echo "CXX=${SYSROOT}/bin/${{ inputs.toolchain }}-c++" >> $GITHUB_ENV
 
       # Write output variables
-      echo "root=${SYSROOT}" >> $GITHUB_OUTPUT
-      echo "ar=${AR}"        >> $GITHUB_OUTPUT
-      echo "as=${AS}"        >> $GITHUB_OUTPUT
-      echo "cc=${CC}"        >> $GITHUB_OUTPUT
-      echo "cxx=${CXX}"      >> $GITHUB_OUTPUT
-      echo "ld=${LD}"        >> $GITHUB_OUTPUT
+      echo "root=${SYSROOT}"                                 >> $GITHUB_OUTPUT
+      echo "ar=${SYSROOT}/bin/${{ inputs.toolchain }}-ar"    >> $GITHUB_OUTPUT
+      echo "as=${SYSROOT}/bin/${{ inputs.toolchain }}-as"    >> $GITHUB_OUTPUT
+      echo "cc=${SYSROOT}/bin/${{ inputs.toolchain }}-cc"    >> $GITHUB_OUTPUT
+      echo "cxx=${SYSROOT}/bin/${{ inputs.toolchain }}-c++"  >> $GITHUB_OUTPUT
+      echo "ld=${SYSROOT}/bin/${{ inputs.toolchain }}-ld"    >> $GITHUB_OUTPUT
